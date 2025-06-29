@@ -37,6 +37,10 @@ pub mod player {
 
     pub const ROTATION_SPEED: f32 = PI / 3.0; // rad / sec
     pub const MOVEMENT_SPEED: f32 = 2.0;
+    pub const GRAVITY: f32 = 9.8;
+    pub const PLAYER_HEIGHT: f32 = 1.70;
+    pub const PLAYER_RADIUS: f32 = 0.3;
+    pub const JUMP_SPEED: f32 = 5.0;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
