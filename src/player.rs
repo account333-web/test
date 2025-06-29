@@ -5,7 +5,10 @@ use nalgebra::{ComplexField, Vector3};
 
 use crate::{
     camera::Camera,
-    constants::{BlockType, player::MOVEMENT_SPEED},
+    constants::{
+        BlockType,
+        player::{GRAVITY, JUMP_SPEED, MOVEMENT_SPEED, PLAYER_HEIGHT, PLAYER_RADIUS},
+    },
     eadk,
     mesh::{Mesh, Quad, QuadDir},
     world::World,
@@ -14,6 +17,8 @@ use crate::{
 pub struct Player {
     pub pos: Vector3<f32>,
     pub rotation: Vector3<f32>,
+    velocity: Vector3<f32>,
+    on_ground: bool,
     ray_cast_result: Option<RaycastResult>,
 }
 
@@ -22,6 +27,8 @@ impl Player {
         Player {
             pos: Vector3::new(0., 0., 0.),
             rotation: Vector3::new(0., 0., 0.),
+            velocity: Vector3::new(0., 0., 0.),
+            on_ground: false,
             ray_cast_result: None,
         }
     }
@@ -39,7 +46,7 @@ impl Player {
     }
 
     pub fn sync_with_camera(&mut self, camera: &mut Camera) {
-        camera.update_pos(self.pos - Vector3::new(0., 1.70, 0.));
+        camera.update_pos(self.pos - Vector3::new(0., PLAYER_HEIGHT, 0.));
         self.rotation = *camera.get_rotation();
     }
 
@@ -63,38 +70,44 @@ impl Player {
         self.ray_cast_result = self.ray_cast(camera, world, 10);
 
         // Movements
+        let mut velocity = Vector3::new(0.0, self.velocity.y, 0.0);
+
         if keyboard_state.key_down(eadk::input::Key::Toolbox) {
             // Forward
             let translation = sincosf(self.rotation.y);
-            self.pos.x += translation.0 * delta * MOVEMENT_SPEED;
-            self.pos.z += translation.1 * delta * MOVEMENT_SPEED;
+            velocity.x += translation.0 * MOVEMENT_SPEED;
+            velocity.z += translation.1 * MOVEMENT_SPEED;
         }
         if keyboard_state.key_down(eadk::input::Key::Comma) {
             // Backward
             let translation = sincosf(self.rotation.y);
-            self.pos.x -= translation.0 * delta * MOVEMENT_SPEED;
-            self.pos.z -= translation.1 * delta * MOVEMENT_SPEED;
+            velocity.x -= translation.0 * MOVEMENT_SPEED;
+            velocity.z -= translation.1 * MOVEMENT_SPEED;
         }
         if keyboard_state.key_down(eadk::input::Key::Imaginary) {
             // Left
             let translation = sincosf(self.rotation.y + PI / 2.0);
-            self.pos.x -= translation.0 * delta * MOVEMENT_SPEED;
-            self.pos.z -= translation.1 * delta * MOVEMENT_SPEED;
+            velocity.x -= translation.0 * MOVEMENT_SPEED;
+            velocity.z -= translation.1 * MOVEMENT_SPEED;
         }
         if keyboard_state.key_down(eadk::input::Key::Power) {
             // Right
             let translation = sincosf(self.rotation.y + PI / 2.0);
-            self.pos.x += translation.0 * delta * MOVEMENT_SPEED;
-            self.pos.z += translation.1 * delta * MOVEMENT_SPEED;
+            velocity.x += translation.0 * MOVEMENT_SPEED;
+            velocity.z += translation.1 * MOVEMENT_SPEED;
         }
-        if keyboard_state.key_down(eadk::input::Key::Shift) {
-            // Up
-            self.pos.y -= delta * MOVEMENT_SPEED;
+
+        if keyboard_state.key_down(eadk::input::Key::Shift) && self.on_ground {
+            // Jump
+            velocity.y = -JUMP_SPEED;
         }
-        if keyboard_state.key_down(eadk::input::Key::Exp) {
-            // Down
-            self.pos.y += delta * MOVEMENT_SPEED;
-        }
+
+        self.velocity.y += GRAVITY * delta;
+        velocity.y += self.velocity.y;
+
+        self.move_and_collide(velocity * delta, world);
+
+        self.velocity.y = velocity.y;
 
         if just_pressed_keyboard_state.key_down(eadk::input::Key::Back) {
             // Break Block
@@ -116,6 +129,57 @@ impl Player {
                 }
             }
         }
+    }
+
+    fn is_colliding(&self, world: &World, pos: Vector3<f32>) -> bool {
+        let min_x = (pos.x - PLAYER_RADIUS).floor() as isize;
+        let max_x = (pos.x + PLAYER_RADIUS).floor() as isize;
+        let min_y = pos.y.floor() as isize;
+        let max_y = (pos.y + PLAYER_HEIGHT).floor() as isize;
+        let min_z = (pos.z - PLAYER_RADIUS).floor() as isize;
+        let max_z = (pos.z + PLAYER_RADIUS).floor() as isize;
+
+        for x in min_x..=max_x {
+            for y in min_y..=max_y {
+                for z in min_z..=max_z {
+                    if let Some(b) = world.get_block_in_world(Vector3::new(x, y, z)) {
+                        if !b.is_air() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn move_and_collide(&mut self, movement: Vector3<f32>, world: &World) {
+        let mut new_pos = self.pos;
+
+        new_pos.x += movement.x;
+        if self.is_colliding(world, new_pos) {
+            new_pos.x = self.pos.x;
+        }
+
+        new_pos.z += movement.z;
+        if self.is_colliding(world, new_pos) {
+            new_pos.z = self.pos.z;
+        }
+
+        new_pos.y += movement.y;
+        if self.is_colliding(world, new_pos) {
+            if movement.y > 0.0 {
+                new_pos.y = new_pos.y.floor();
+                self.on_ground = true;
+            } else {
+                new_pos.y = self.pos.y;
+            }
+            self.velocity.y = 0.0;
+        } else {
+            self.on_ground = false;
+        }
+
+        self.pos = new_pos;
     }
 
     fn ray_cast(&self, camera: &Camera, world: &World, max_lenght: usize) -> Option<RaycastResult> {
